@@ -76,15 +76,14 @@ public:
         if (land_speed_->onExecute(goal_handle))
         {
             RCLCPP_INFO(this->get_logger(), "Land succeeded");
+
+            if (this->callStateMachineServer(PSME::LANDED, true) != rclcpp::FutureReturnCode::SUCCESS) {
+                RCLCPP_ERROR(this->get_logger(), "Failed to call service state_machine_event");
+            }
         }
         else
         {
             RCLCPP_INFO(this->get_logger(), "Land canceled");
-        }
-
-        // TODO: Always changing to landed
-        if (this->callStateMachineServer(PSME::LANDED, true) != rclcpp::FutureReturnCode::SUCCESS) {
-            RCLCPP_ERROR(this->get_logger(), "Failed to call service state_machine_event");
         }
     }
 
