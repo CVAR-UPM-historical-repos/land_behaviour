@@ -19,7 +19,6 @@ def generate_launch_description():
         Node(
             package='land_behaviour',
             executable='land_behaviour_node',
-            name='land_behaviour_node',
             namespace=LaunchConfiguration('drone_id'),
             parameters=[config],
             output='screen',
