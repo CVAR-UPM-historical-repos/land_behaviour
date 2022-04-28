@@ -31,7 +31,7 @@ public:
         {
             land_speed_ = loader_->createSharedInstance(this->get_parameter("default_land_plugin").as_string());
             land_speed_->initialize(this);
-            RCLCPP_INFO(this->get_logger(), "PLUGIN LOADED");
+            RCLCPP_INFO(this->get_logger(), "PLUGIN LOADED: %s", this->get_parameter("default_land_plugin").as_string().c_str());
         }
         catch (pluginlib::PluginlibException &ex)
         {
