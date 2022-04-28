@@ -44,11 +44,7 @@ public:
 
     rclcpp_action::GoalResponse onAccepted(const std::shared_ptr<const as2_msgs::action::Land::Goal> goal)
     {
-        if (goal->land_speed < 0.0f)
-        {
-            RCLCPP_ERROR(this->get_logger(), "LandBehaviour: Invalid land speed");
-            return rclcpp_action::GoalResponse::REJECT;
-        }
+        float land_speed = fabs(goal->land_speed);
 
         if ( this->callStateMachineServer(PSME::LAND, false) != rclcpp::FutureReturnCode::SUCCESS)
         {
@@ -57,8 +53,7 @@ public:
         }
 
         as2_msgs::action::Land::Goal new_goal;
-        new_goal.land_speed = (goal->land_speed != 0.0f) ? -fabs(goal->land_speed) : -fabs(this->get_parameter("default_land_speed").as_double());
-
+        new_goal.land_speed = (land_speed != 0.0f) ? -fabs(land_speed) : -fabs(this->get_parameter("default_land_speed").as_double());
         auto _goal = std::make_shared<const as2_msgs::action::Land::Goal>(new_goal);
 
         RCLCPP_INFO(this->get_logger(), "LandBehaviour: Land with speed %f", _goal->land_speed);
