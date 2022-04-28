@@ -7,9 +7,12 @@
 #include "as2_core/names/services.hpp"
 
 #include <as2_msgs/action/land.hpp>
+#include <std_srvs/srv/set_bool.hpp>
 
 #include <pluginlib/class_loader.hpp>
 #include "land_plugin_base/land_base.hpp"
+
+#include "as2_core/synchronous_service_client.hpp"
 
 class LandBehaviour : public as2::BasicBehaviour<as2_msgs::action::Land>
 {
@@ -74,6 +77,12 @@ public:
 
             if (this->callStateMachineServer(PSME::LANDED, true) != rclcpp::FutureReturnCode::SUCCESS) {
                 RCLCPP_ERROR(this->get_logger(), "Failed to call service state_machine_event");
+            }
+
+            auto arm_cli_ = as2::SynchronousServiceClient<std_srvs::srv::SetBool>(as2_names::services::platform::set_arming_state);
+            if (!arm_cli_.sendRequest(std_srvs::srv::SetBool::Request().set__data(false)).success)
+            {
+                RCLCPP_ERROR(this->get_logger(), "Unable to disarm");
             }
         }
         else

@@ -18,6 +18,7 @@ set(PROJECT_DEPENDENCIES
   nav_msgs
   as2_core
   as2_msgs
+  std_srvs
 )
 
 foreach(DEPENDENCY ${PROJECT_DEPENDENCIES})
