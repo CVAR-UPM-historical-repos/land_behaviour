@@ -122,7 +122,7 @@ public:
       request.data = true;
 
       auto disarm_cli = as2::SynchronousServiceClient<std_srvs::srv::SetBool>(
-          as2_names::services::platform::set_platform_state_machine_event);
+          as2_names::services::platform::set_arming_state);
       bool out = disarm_cli.sendRequest(request, response);
 
       if (out && response.success)
