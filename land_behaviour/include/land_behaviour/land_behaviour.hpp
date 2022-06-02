@@ -59,19 +59,35 @@ public:
   LandBehaviour()
       : as2::BasicBehaviour<as2_msgs::action::Land>(as2_names::actions::behaviours::land)
   {
-    this->declare_parameter("default_land_plugin");
-    this->declare_parameter("default_land_speed");
-
+    try
+    {
+      this->declare_parameter<std::string>("default_land_plugin");
+    }
+    catch(const rclcpp::ParameterTypeException& e)
+    {
+      RCLCPP_FATAL(this->get_logger(), "Launch argument <default_land_plugin> not defined or malformed: %s", e.what());
+      this->~LandBehaviour();
+    }
+    try
+    {
+      this->declare_parameter<double>("default_land_speed");
+    }
+    catch(const rclcpp::ParameterTypeException& e)
+    {
+      RCLCPP_FATAL(this->get_logger(), "Launch argument <default_land_speed> not defined or malformed: %s", e.what());
+      this->~LandBehaviour();
+    }
+    
     loader_ = std::make_shared<pluginlib::ClassLoader<land_base::LandBase>>("land_plugin_base",
                                                                             "land_base::LandBase");
 
     try
     {
-      land_plugin_ =
-          loader_->createSharedInstance(this->get_parameter("default_land_plugin").as_string());
+      std::string plugin_name = this->get_parameter("default_land_plugin").as_string();
+      plugin_name += "::Plugin";
+      land_plugin_ = loader_->createSharedInstance(plugin_name);
       land_plugin_->initialize(this);
-      RCLCPP_INFO(this->get_logger(), "LAND PLUGIN LOADED: %s",
-                  this->get_parameter("default_land_plugin").as_string().c_str());
+      RCLCPP_INFO(this->get_logger(), "LAND PLUGIN LOADED: %s", plugin_name.c_str());
     }
     catch (pluginlib::PluginlibException &ex)
     {
@@ -79,6 +95,8 @@ public:
                    ex.what());
     }
   };
+
+  ~LandBehaviour(){};
 
   rclcpp_action::GoalResponse onAccepted(
       const std::shared_ptr<const as2_msgs::action::Land::Goal> goal)
