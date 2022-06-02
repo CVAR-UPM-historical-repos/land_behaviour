@@ -61,7 +61,8 @@ public:
   {
     try
     {
-      this->declare_parameter<std::string>("default_land_plugin");
+      // this->declare_parameter<std::string>("default_land_plugin");
+      this->declare_parameter("default_land_plugin"); // TODO: Fix for ROS2 Galactic
     }
     catch(const rclcpp::ParameterTypeException& e)
     {
@@ -70,7 +71,8 @@ public:
     }
     try
     {
-      this->declare_parameter<double>("default_land_speed");
+      // this->declare_parameter<double>("default_land_speed");
+      this->declare_parameter("default_land_speed"); // TODO: Fix for ROS2 Galactic
     }
     catch(const rclcpp::ParameterTypeException& e)
     {
