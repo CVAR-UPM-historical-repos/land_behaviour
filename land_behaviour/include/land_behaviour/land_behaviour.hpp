@@ -139,7 +139,7 @@ public:
 
       auto request = std_srvs::srv::SetBool::Request();
       auto response = std_srvs::srv::SetBool::Response();
-      request.data = true;
+      request.data = false;
 
       auto disarm_cli = as2::SynchronousServiceClient<std_srvs::srv::SetBool>(
           as2_names::services::platform::set_arming_state);
