@@ -42,6 +42,11 @@
 #include "as2_core/names/topics.hpp"
 
 #include "rclcpp_action/rclcpp_action.hpp"
+#include <message_filters/subscriber.h>
+#include <message_filters/time_synchronizer.h>
+#include <message_filters/sync_policies/approximate_time.h>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
 
 #include <as2_msgs/action/land.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -56,10 +61,11 @@ namespace land_base
         void initialize(as2::Node *node_ptr)
         {
             node_ptr_ = node_ptr;
-            odom_sub_ = node_ptr_->create_subscription<nav_msgs::msg::Odometry>(
-                node_ptr_->generate_global_name(as2_names::topics::self_localization::odom),
-                as2_names::topics::self_localization::qos,
-                std::bind(&LandBase::odomCb, this, std::placeholders::_1));
+
+            pose_sub_ = std::make_shared<message_filters::Subscriber<geometry_msgs::msg::PoseStamped>>(node_ptr_, as2_names::topics::self_localization::pose, as2_names::topics::self_localization::qos.get_rmw_qos_profile());
+            twist_sub_ = std::make_shared<message_filters::Subscriber<geometry_msgs::msg::TwistStamped>>(node_ptr_, as2_names::topics::self_localization::twist, as2_names::topics::self_localization::qos.get_rmw_qos_profile());
+            synchronizer_ = std::make_shared<message_filters::Synchronizer<approximate_policy>>(approximate_policy(5), *(pose_sub_.get()), *(twist_sub_.get()));
+            synchronizer_->registerCallback(&LandBase::state_callback, this);
 
             this->ownInit(node_ptr_);
         };
@@ -78,10 +84,12 @@ namespace land_base
 
     private:
         // TODO: if onExecute is done with timer no atomic attributes needed
-        void odomCb(const nav_msgs::msg::Odometry::ConstSharedPtr msg)
+        void state_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr pose_msg,
+                            const geometry_msgs::msg::TwistStamped::ConstSharedPtr twist_msg)
         {
-            this->actual_heigth_ = msg->pose.pose.position.z;
-            this->actual_z_speed_ = msg->twist.twist.linear.z;
+            this->actual_heigth_ = pose_msg->pose.position.z;
+            this->actual_z_speed_ = twist_msg->twist.linear.z;
+            return;
         };
 
     protected:
@@ -93,7 +101,10 @@ namespace land_base
         float desired_speed_ = 0.0;
 
     private:
-        rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+        std::shared_ptr<message_filters::Subscriber<geometry_msgs::msg::PoseStamped>> pose_sub_;
+        std::shared_ptr<message_filters::Subscriber<geometry_msgs::msg::TwistStamped>> twist_sub_;
+        typedef message_filters::sync_policies::ApproximateTime<geometry_msgs::msg::PoseStamped, geometry_msgs::msg::TwistStamped> approximate_policy;
+        std::shared_ptr<message_filters::Synchronizer<approximate_policy>> synchronizer_;
     }; // LandBase class
 
 } // land_base namespace
