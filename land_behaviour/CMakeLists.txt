@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5)
 set(PROJECT_NAME land_behaviour)
-project(${PROJECT_NAME} VERSION 0.1.0)
+project(${PROJECT_NAME} VERSION 0.2.0)
 
 # Default to C++17
 if(NOT CMAKE_CXX_STANDARD)
@@ -20,7 +20,6 @@ set(PROJECT_DEPENDENCIES
   land_plugin_base
   rclcpp
   rclcpp_action
-  nav_msgs
   as2_core
   as2_msgs
   std_srvs

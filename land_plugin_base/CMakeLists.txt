@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.5)
 set(PROJECT_NAME land_plugin_base)
-project(${PROJECT_NAME} VERSION 0.1.0)
+project(${PROJECT_NAME} VERSION 0.2.0)
 
 # Default to C++17
 if(NOT CMAKE_CXX_STANDARD)
@@ -19,9 +19,9 @@ set(PROJECT_DEPENDENCIES
   pluginlib
   rclcpp
   rclcpp_action
-  nav_msgs
   as2_core
   as2_msgs
+  geometry_msgs
 )
 
 foreach(DEPENDENCY ${PROJECT_DEPENDENCIES})

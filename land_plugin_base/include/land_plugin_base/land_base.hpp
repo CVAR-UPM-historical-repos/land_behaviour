@@ -49,7 +49,6 @@
 #include <geometry_msgs/msg/twist_stamped.hpp>
 
 #include <as2_msgs/action/land.hpp>
-#include <nav_msgs/msg/odometry.hpp>
 
 namespace land_base
 {
