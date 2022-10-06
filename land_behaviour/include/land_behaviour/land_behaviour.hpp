@@ -140,7 +140,7 @@ public:
       request.data = false;
 
       auto disarm_cli = as2::SynchronousServiceClient<std_srvs::srv::SetBool>(
-          as2_names::services::platform::set_arming_state);
+          as2_names::services::platform::set_arming_state, this);
       bool out = disarm_cli.sendRequest(request, response);
 
       if (out && response.success)
@@ -166,7 +166,7 @@ private:
     request.event.event = machine_event;
 
     auto set_mode_cli = as2::SynchronousServiceClient<as2_msgs::srv::SetPlatformStateMachineEvent>(
-        as2_names::services::platform::set_platform_state_machine_event);
+        as2_names::services::platform::set_platform_state_machine_event, this);
     bool out = set_mode_cli.sendRequest(request, response);
 
     if (out && response.success)

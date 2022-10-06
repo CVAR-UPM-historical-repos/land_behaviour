@@ -66,6 +66,12 @@ namespace land_base
             synchronizer_ = std::make_shared<message_filters::Synchronizer<approximate_policy>>(approximate_policy(5), *(pose_sub_.get()), *(twist_sub_.get()));
             synchronizer_->registerCallback(&LandBase::state_callback, this);
 
+            node_ptr_->declare_parameter<std::string>("frame_id_pose", "");
+            node_ptr_->get_parameter("frame_id_pose", frame_id_pose_);
+
+            node_ptr_->declare_parameter<std::string>("frame_id_twist", "");
+            node_ptr_->get_parameter("frame_id_twist", frame_id_twist_);
+
             this->ownInit(node_ptr_);
         };
 
@@ -98,6 +104,9 @@ namespace land_base
         std::atomic<float> actual_z_speed_;
 
         float desired_speed_ = 0.0;
+
+        std::string frame_id_pose_ = "";
+        std::string frame_id_twist_ = "";
 
     private:
         std::shared_ptr<message_filters::Subscriber<geometry_msgs::msg::PoseStamped>> pose_sub_;
