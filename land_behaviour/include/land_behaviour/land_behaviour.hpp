@@ -50,47 +50,38 @@
 #include "as2_core/synchronous_service_client.hpp"
 #include "land_plugin_base/land_base.hpp"
 
-class LandBehaviour : public as2::BasicBehaviour<as2_msgs::action::Land>
-{
+class LandBehaviour : public as2::BasicBehaviour<as2_msgs::action::Land> {
 public:
   using GoalHandleLand = rclcpp_action::ServerGoalHandle<as2_msgs::action::Land>;
-  using PSME = as2_msgs::msg::PlatformStateMachineEvent;
+  using PSME           = as2_msgs::msg::PlatformStateMachineEvent;
 
   LandBehaviour()
-      : as2::BasicBehaviour<as2_msgs::action::Land>(as2_names::actions::behaviours::land)
-  {
-    try
-    {
+      : as2::BasicBehaviour<as2_msgs::action::Land>(as2_names::actions::behaviours::land) {
+    try {
       this->declare_parameter<std::string>("default_land_plugin");
-    }
-    catch(const rclcpp::ParameterTypeException& e)
-    {
-      RCLCPP_FATAL(this->get_logger(), "Launch argument <default_land_plugin> not defined or malformed: %s", e.what());
+    } catch (const rclcpp::ParameterTypeException& e) {
+      RCLCPP_FATAL(this->get_logger(),
+                   "Launch argument <default_land_plugin> not defined or malformed: %s", e.what());
       this->~LandBehaviour();
     }
-    try
-    {
+    try {
       this->declare_parameter<double>("default_land_speed");
-    }
-    catch(const rclcpp::ParameterTypeException& e)
-    {
-      RCLCPP_FATAL(this->get_logger(), "Launch argument <default_land_speed> not defined or malformed: %s", e.what());
+    } catch (const rclcpp::ParameterTypeException& e) {
+      RCLCPP_FATAL(this->get_logger(),
+                   "Launch argument <default_land_speed> not defined or malformed: %s", e.what());
       this->~LandBehaviour();
     }
-    
+
     loader_ = std::make_shared<pluginlib::ClassLoader<land_base::LandBase>>("land_plugin_base",
                                                                             "land_base::LandBase");
 
-    try
-    {
+    try {
       std::string plugin_name = this->get_parameter("default_land_plugin").as_string();
       plugin_name += "::Plugin";
       land_plugin_ = loader_->createSharedInstance(plugin_name);
       land_plugin_->initialize(this);
       RCLCPP_INFO(this->get_logger(), "LAND PLUGIN LOADED: %s", plugin_name.c_str());
-    }
-    catch (pluginlib::PluginlibException &ex)
-    {
+    } catch (pluginlib::PluginlibException& ex) {
       RCLCPP_ERROR(this->get_logger(), "The plugin failed to load for some reason. Error: %s\n",
                    ex.what());
     }
@@ -99,68 +90,58 @@ public:
   ~LandBehaviour(){};
 
   rclcpp_action::GoalResponse onAccepted(
-      const std::shared_ptr<const as2_msgs::action::Land::Goal> goal)
-  {
+      const std::shared_ptr<const as2_msgs::action::Land::Goal> goal) {
     float land_speed = fabs(goal->land_speed);
 
     as2_msgs::action::Land::Goal new_goal;
     new_goal.land_speed = (land_speed != 0.0f)
                               ? -fabs(land_speed)
                               : -fabs(this->get_parameter("default_land_speed").as_double());
-    auto _goal = std::make_shared<const as2_msgs::action::Land::Goal>(new_goal);
+    auto _goal          = std::make_shared<const as2_msgs::action::Land::Goal>(new_goal);
 
     RCLCPP_INFO(this->get_logger(), "LandBehaviour: Land with speed %f", _goal->land_speed);
 
-    if (!this->callStateMachineServer(PSME::LAND))
-    {
+    if (!this->callStateMachineServer(PSME::LAND)) {
       RCLCPP_ERROR(this->get_logger(), "Failed to call service state_machine_event");
     }
 
     return land_plugin_->onAccepted(_goal);
   }
 
-  rclcpp_action::CancelResponse onCancel(const std::shared_ptr<GoalHandleLand> goal_handle)
-  {
+  rclcpp_action::CancelResponse onCancel(const std::shared_ptr<GoalHandleLand> goal_handle) {
     return land_plugin_->onCancel(goal_handle);
   }
 
-  void onExecute(const std::shared_ptr<GoalHandleLand> goal_handle)
-  {
-    if (land_plugin_->onExecute(goal_handle))
-    {
+  void onExecute(const std::shared_ptr<GoalHandleLand> goal_handle) {
+    if (land_plugin_->onExecute(goal_handle)) {
       RCLCPP_INFO(this->get_logger(), "Land succeeded");
 
-      if (!this->callStateMachineServer(PSME::LANDED))
-      {
+      if (!this->callStateMachineServer(PSME::LANDED)) {
         RCLCPP_ERROR(this->get_logger(), "Failed to call service state_machine_event");
       }
 
-      auto request = std_srvs::srv::SetBool::Request();
+      auto request  = std_srvs::srv::SetBool::Request();
       auto response = std_srvs::srv::SetBool::Response();
-      request.data = false;
+      request.data  = false;
 
       auto disarm_cli = as2::SynchronousServiceClient<std_srvs::srv::SetBool>(
           as2_names::services::platform::set_arming_state, this);
       bool out = disarm_cli.sendRequest(request, response);
 
-      if (out && response.success)
-      {
+      if (out && response.success) {
         return;
       }
 
       RCLCPP_ERROR(this->get_logger(), "Unable to disarm");
-    }
-    else
-    {
+    } else {
       RCLCPP_WARN(this->get_logger(), "Land canceled");
       return;
     }
   }
 
 private:
-  bool callStateMachineServer(const int8_t machine_event)
-  {
-    auto request = as2_msgs::srv::SetPlatformStateMachineEvent::Request();
+  bool callStateMachineServer(const int8_t machine_event) {
+    auto request  = as2_msgs::srv::SetPlatformStateMachineEvent::Request();
     auto response = as2_msgs::srv::SetPlatformStateMachineEvent::Response();
 
     request.event.event = machine_event;
@@ -169,8 +150,7 @@ private:
         as2_names::services::platform::set_platform_state_machine_event, this);
     bool out = set_mode_cli.sendRequest(request, response);
 
-    if (out && response.success)
-    {
+    if (out && response.success) {
       return true;
     }
     return false;
@@ -181,4 +161,4 @@ private:
   std::shared_ptr<land_base::LandBase> land_plugin_;
 };
 
-#endif // LAND_BEHAVIOUR_HPP
+#endif  // LAND_BEHAVIOUR_HPP
