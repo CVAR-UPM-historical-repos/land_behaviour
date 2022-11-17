@@ -1,6 +1,6 @@
 /*!*******************************************************************************************
  *  \file       land_base.hpp
- *  \brief      land_base header file
+ *  \brief      Base class for land plugins header
  *  \authors    Miguel Fernández Cortizas
  *              Pedro Arias Pérez
  *              David Pérez Saura
@@ -37,89 +37,125 @@
 #ifndef LAND_BASE_HPP
 #define LAND_BASE_HPP
 
+#include <rclcpp_action/rclcpp_action.hpp>
+
+#include "as2_behavior/behavior_server.hpp"
 #include "as2_core/names/actions.hpp"
 #include "as2_core/names/topics.hpp"
 #include "as2_core/node.hpp"
+#include "as2_core/utils/frame_utils.hpp"
+#include "as2_core/utils/tf_utils.hpp"
+#include "as2_msgs/action/land.hpp"
+#include "as2_msgs/msg/platform_info.hpp"
+#include "as2_msgs/msg/platform_status.hpp"
+#include "motion_reference_handlers/hover_motion.hpp"
 
-#include <message_filters/subscriber.h>
-#include <message_filters/sync_policies/approximate_time.h>
-#include <message_filters/time_synchronizer.h>
+#include <Eigen/Dense>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/twist_stamped.hpp>
-#include "rclcpp_action/rclcpp_action.hpp"
-
-#include <as2_msgs/action/land.hpp>
 
 namespace land_base {
+
 class LandBase {
 public:
   using GoalHandleLand = rclcpp_action::ServerGoalHandle<as2_msgs::action::Land>;
 
-  void initialize(as2::Node *node_ptr) {
-    node_ptr_ = node_ptr;
-
-    pose_sub_ = std::make_shared<message_filters::Subscriber<geometry_msgs::msg::PoseStamped>>(
-        node_ptr_, as2_names::topics::self_localization::pose,
-        as2_names::topics::self_localization::qos.get_rmw_qos_profile());
-    twist_sub_ = std::make_shared<message_filters::Subscriber<geometry_msgs::msg::TwistStamped>>(
-        node_ptr_, as2_names::topics::self_localization::twist,
-        as2_names::topics::self_localization::qos.get_rmw_qos_profile());
-    synchronizer_ = std::make_shared<message_filters::Synchronizer<approximate_policy>>(
-        approximate_policy(5), *(pose_sub_.get()), *(twist_sub_.get()));
-    synchronizer_->registerCallback(&LandBase::state_callback, this);
-
-    node_ptr_->declare_parameter<std::string>("frame_id_pose", "");
-    node_ptr_->get_parameter("frame_id_pose", frame_id_pose_);
-
-    node_ptr_->declare_parameter<std::string>("frame_id_twist", "");
-    node_ptr_->get_parameter("frame_id_twist", frame_id_twist_);
-
-    this->ownInit(node_ptr_);
-  };
-
-  virtual rclcpp_action::GoalResponse onAccepted(
-      const std::shared_ptr<const as2_msgs::action::Land::Goal> goal) = 0;
-  virtual rclcpp_action::CancelResponse onCancel(
-      const std::shared_ptr<GoalHandleLand> goal_handle)                    = 0;
-  virtual bool onExecute(const std::shared_ptr<GoalHandleLand> goal_handle) = 0;
-
+  LandBase(){};
   virtual ~LandBase(){};
 
+  void initialize(as2::Node *node_ptr, const std::shared_ptr<as2::tf::TfHandler> tf_handler) {
+    node_ptr_             = node_ptr;
+    hover_motion_handler_ = std::make_shared<as2::motionReferenceHandlers::HoverMotion>(node_ptr_);
+    this->ownInit();
+  }
+
+  virtual void state_callback(geometry_msgs::msg::PoseStamped &pose_msg,
+                              geometry_msgs::msg::TwistStamped &twist_msg) {
+    actual_pose_ = pose_msg;
+
+    feedback_.actual_land_height = actual_pose_.pose.position.z;
+    feedback_.actual_land_speed  = twist_msg.twist.linear.z;
+
+    localization_received_ = true;
+    return;
+  }
+
+  virtual bool on_deactivate(const std::shared_ptr<std::string> &message) = 0;
+  virtual bool on_pause(const std::shared_ptr<std::string> &message)      = 0;
+  virtual bool on_resume(const std::shared_ptr<std::string> &message)     = 0;
+
+  virtual bool on_activate(std::shared_ptr<const as2_msgs::action::Land::Goal> goal) {
+    if (!localization_received_) {
+      RCLCPP_ERROR(node_ptr_->get_logger(), "Behavior reject, there is no localization");
+      return false;
+    }
+
+    if (own_activate(goal)) {
+      goal_ = *goal;
+      return true;
+    }
+    return false;
+  }
+
+  virtual bool on_modify(std::shared_ptr<const as2_msgs::action::Land::Goal> goal) {
+    if (!localization_received_) {
+      RCLCPP_ERROR(node_ptr_->get_logger(), "Behavior reject, there is no localization");
+      return false;
+    }
+
+    if (own_activate(goal)) {
+      goal_ = *goal;
+      return true;
+    }
+    return false;
+  }
+
+  virtual as2_behavior::ExecutionStatus on_run(
+      const std::shared_ptr<const as2_msgs::action::Land::Goal> goal,
+      std::shared_ptr<as2_msgs::action::Land::Feedback> &feedback_msg,
+      std::shared_ptr<as2_msgs::action::Land::Result> &result_msg) {
+    as2_behavior::ExecutionStatus status = own_run();
+
+    feedback_msg = std::make_shared<as2_msgs::action::Land::Feedback>(feedback_);
+    result_msg   = std::make_shared<as2_msgs::action::Land::Result>(result_);
+    return status;
+  }
+
+  virtual void on_excution_end(const as2_behavior::ExecutionStatus &state) {
+    localization_received_ = false;
+    own_execution_end(state);
+    return;
+  }
+
 protected:
-  LandBase(){};
+  virtual void ownInit(){};
 
-  // To initialize needed publisher for each plugin
-  virtual void ownInit(as2::Node *node_ptr){};
+  virtual bool own_activate(std::shared_ptr<const as2_msgs::action::Land::Goal> goal) {
+    return true;
+  }
 
-private:
-  // TODO: if onExecute is done with timer no atomic attributes needed
-  void state_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr pose_msg,
-                      const geometry_msgs::msg::TwistStamped::ConstSharedPtr twist_msg) {
-    this->actual_heigth_  = pose_msg->pose.position.z;
-    this->actual_z_speed_ = twist_msg->twist.linear.z;
+  virtual as2_behavior::ExecutionStatus own_run() = 0;
+
+  virtual bool own_modify(std::shared_ptr<const as2_msgs::action::Land::Goal> goal) { return true; }
+
+  virtual void own_execution_end(const as2_behavior::ExecutionStatus &state) = 0;
+
+  inline void sendHover() {
+    hover_motion_handler_->sendHover();
     return;
   };
 
 protected:
   as2::Node *node_ptr_;
 
-  std::atomic<float> actual_heigth_;
-  std::atomic<float> actual_z_speed_;
+  as2_msgs::action::Land::Goal goal_;
+  as2_msgs::action::Land::Feedback feedback_;
+  as2_msgs::action::Land::Result result_;
 
-  float desired_speed_ = 0.0;
+  geometry_msgs::msg::PoseStamped actual_pose_;
+  bool localization_received_ = false;
 
-  std::string frame_id_pose_  = "";
-  std::string frame_id_twist_ = "";
-
-private:
-  std::shared_ptr<message_filters::Subscriber<geometry_msgs::msg::PoseStamped>> pose_sub_;
-  std::shared_ptr<message_filters::Subscriber<geometry_msgs::msg::TwistStamped>> twist_sub_;
-  typedef message_filters::sync_policies::ApproximateTime<geometry_msgs::msg::PoseStamped,
-                                                          geometry_msgs::msg::TwistStamped>
-      approximate_policy;
-  std::shared_ptr<message_filters::Synchronizer<approximate_policy>> synchronizer_;
-};  // LandBase class
-
+  std::shared_ptr<as2::motionReferenceHandlers::HoverMotion> hover_motion_handler_ = nullptr;
+};  // class LandBase
 }  // namespace land_base
-
 #endif  // LAND_BASE_HPP
