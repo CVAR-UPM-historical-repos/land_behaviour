@@ -1,6 +1,6 @@
 /*!*******************************************************************************************
  *  \file       land_behaviour.hpp
- *  \brief      land_behaviour header file
+ *  \brief      Land behaviour class header file
  *  \authors    Miguel Fernández Cortizas
  *              Pedro Arias Pérez
  *              David Pérez Saura
@@ -37,128 +37,193 @@
 #ifndef LAND_BEHAVIOUR_HPP
 #define LAND_BEHAVIOUR_HPP
 
-#include <as2_msgs/action/land.hpp>
-#include <chrono>
-#include <pluginlib/class_loader.hpp>
-#include <std_srvs/srv/set_bool.hpp>
-#include <thread>
-
-#include "as2_core/as2_basic_behaviour.hpp"
+#include "as2_behavior/behavior_server.hpp"
 #include "as2_core/names/actions.hpp"
 #include "as2_core/names/services.hpp"
 #include "as2_core/names/topics.hpp"
 #include "as2_core/synchronous_service_client.hpp"
+#include "as2_core/utils/tf_utils.hpp"
+#include "as2_msgs/action/land.hpp"
+#include "as2_msgs/msg/platform_info.hpp"
+#include "as2_msgs/srv/set_platform_state_machine_event.hpp"
 #include "land_plugin_base/land_base.hpp"
+#include "rclcpp/rclcpp.hpp"
 
-class LandBehaviour : public as2::BasicBehaviour<as2_msgs::action::Land> {
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
+#include <std_srvs/srv/set_bool.hpp>
+
+#include <pluginlib/class_loader.hpp>
+
+class LandBehaviour : public as2_behavior::BehaviorServer<as2_msgs::action::Land> {
 public:
   using GoalHandleLand = rclcpp_action::ServerGoalHandle<as2_msgs::action::Land>;
   using PSME           = as2_msgs::msg::PlatformStateMachineEvent;
 
   LandBehaviour()
-      : as2::BasicBehaviour<as2_msgs::action::Land>(as2_names::actions::behaviours::land) {
+      : as2_behavior::BehaviorServer<as2_msgs::action::Land>(as2_names::actions::behaviours::land) {
     try {
       this->declare_parameter<std::string>("default_land_plugin");
-    } catch (const rclcpp::ParameterTypeException& e) {
+    } catch (const rclcpp::ParameterTypeException &e) {
       RCLCPP_FATAL(this->get_logger(),
-                   "Launch argument <default_land_plugin> not defined or malformed: %s", e.what());
+                   "Launch argument <default_land_plugin> not defined or "
+                   "malformed: %s",
+                   e.what());
       this->~LandBehaviour();
     }
     try {
       this->declare_parameter<double>("default_land_speed");
-    } catch (const rclcpp::ParameterTypeException& e) {
+    } catch (const rclcpp::ParameterTypeException &e) {
       RCLCPP_FATAL(this->get_logger(),
-                   "Launch argument <default_land_speed> not defined or malformed: %s", e.what());
+                   "Launch argument <default_land_speed> not defined or "
+                   "malformed: %s",
+                   e.what());
       this->~LandBehaviour();
     }
 
     loader_ = std::make_shared<pluginlib::ClassLoader<land_base::LandBase>>("land_plugin_base",
                                                                             "land_base::LandBase");
 
+    tf_handler_ = std::make_shared<as2::tf::TfHandler>(this);
+
     try {
       std::string plugin_name = this->get_parameter("default_land_plugin").as_string();
       plugin_name += "::Plugin";
       land_plugin_ = loader_->createSharedInstance(plugin_name);
-      land_plugin_->initialize(this);
-      RCLCPP_INFO(this->get_logger(), "LAND PLUGIN LOADED: %s", plugin_name.c_str());
-    } catch (pluginlib::PluginlibException& ex) {
+      land_plugin_->initialize(this, tf_handler_);
+      RCLCPP_INFO(this->get_logger(), "LAND BEHAVIOUR PLUGIN LOADED: %s", plugin_name.c_str());
+    } catch (pluginlib::PluginlibException &ex) {
       RCLCPP_ERROR(this->get_logger(), "The plugin failed to load for some reason. Error: %s\n",
                    ex.what());
+      this->~LandBehaviour();
     }
+
+    platform_disarm_cli_ = std::make_shared<as2::SynchronousServiceClient<std_srvs::srv::SetBool>>(
+        as2_names::services::platform::set_arming_state, this);
+
+    platform_land_cli_ = std::make_shared<
+        as2::SynchronousServiceClient<as2_msgs::srv::SetPlatformStateMachineEvent>>(
+        as2_names::services::platform::set_platform_state_machine_event, this);
+
+    twist_sub_ = this->create_subscription<geometry_msgs::msg::TwistStamped>(
+        as2_names::topics::self_localization::twist, as2_names::topics::self_localization::qos,
+        std::bind(&LandBehaviour::state_callback, this, std::placeholders::_1));
+
+    RCLCPP_DEBUG(this->get_logger(), "Land Behaviour ready!");
   };
 
   ~LandBehaviour(){};
 
-  rclcpp_action::GoalResponse onAccepted(
-      const std::shared_ptr<const as2_msgs::action::Land::Goal> goal) {
-    float land_speed = fabs(goal->land_speed);
+  void state_callback(const geometry_msgs::msg::TwistStamped::SharedPtr _twist_msg) {
+    geometry_msgs::msg::PoseStamped pose_msg;
+    geometry_msgs::msg::TwistStamped twist_msg = *_twist_msg;
 
-    as2_msgs::action::Land::Goal new_goal;
-    new_goal.land_speed = (land_speed != 0.0f)
-                              ? -fabs(land_speed)
-                              : -fabs(this->get_parameter("default_land_speed").as_double());
-    auto _goal          = std::make_shared<const as2_msgs::action::Land::Goal>(new_goal);
+    if (!tf_handler_->tryConvert(twist_msg, "earth")) return;
 
-    RCLCPP_INFO(this->get_logger(), "LandBehaviour: Land with speed %f", _goal->land_speed);
-
-    if (!this->callStateMachineServer(PSME::LAND)) {
-      RCLCPP_ERROR(this->get_logger(), "Failed to call service state_machine_event");
-    }
-
-    return land_plugin_->onAccepted(_goal);
-  }
-
-  rclcpp_action::CancelResponse onCancel(const std::shared_ptr<GoalHandleLand> goal_handle) {
-    return land_plugin_->onCancel(goal_handle);
-  }
-
-  void onExecute(const std::shared_ptr<GoalHandleLand> goal_handle) {
-    if (land_plugin_->onExecute(goal_handle)) {
-      RCLCPP_INFO(this->get_logger(), "Land succeeded");
-
-      if (!this->callStateMachineServer(PSME::LANDED)) {
-        RCLCPP_ERROR(this->get_logger(), "Failed to call service state_machine_event");
-      }
-
-      auto request  = std_srvs::srv::SetBool::Request();
-      auto response = std_srvs::srv::SetBool::Response();
-      request.data  = false;
-
-      auto disarm_cli = as2::SynchronousServiceClient<std_srvs::srv::SetBool>(
-          as2_names::services::platform::set_arming_state, this);
-      bool out = disarm_cli.sendRequest(request, response);
-
-      if (out && response.success) {
-        return;
-      }
-
-      RCLCPP_ERROR(this->get_logger(), "Unable to disarm");
-    } else {
-      RCLCPP_WARN(this->get_logger(), "Land canceled");
+    try {
+      pose_msg = tf_handler_->getPoseStamped("earth", as2::tf::generateTfName(this, "base_link"),
+                                             tf2_ros::fromMsg(twist_msg.header.stamp));
+    } catch (tf2::TransformException &ex) {
+      RCLCPP_WARN(this->get_logger(), "Could not get state pose transform: %s", ex.what());
       return;
     }
+
+    land_plugin_->state_callback(pose_msg, twist_msg);
+    return;
   }
 
-private:
-  bool callStateMachineServer(const int8_t machine_event) {
-    auto request  = as2_msgs::srv::SetPlatformStateMachineEvent::Request();
-    auto response = as2_msgs::srv::SetPlatformStateMachineEvent::Response();
-
-    request.event.event = machine_event;
-
-    auto set_mode_cli = as2::SynchronousServiceClient<as2_msgs::srv::SetPlatformStateMachineEvent>(
-        as2_names::services::platform::set_platform_state_machine_event, this);
-    bool out = set_mode_cli.sendRequest(request, response);
-
-    if (out && response.success) {
-      return true;
-    }
+  bool sendEventFSME(const int8_t _event) {
+    as2_msgs::srv::SetPlatformStateMachineEvent::Request set_platform_fsm_req;
+    as2_msgs::srv::SetPlatformStateMachineEvent::Response set_platform_fsm_resp;
+    set_platform_fsm_req.event.event = _event;
+    auto out = platform_land_cli_->sendRequest(set_platform_fsm_req, set_platform_fsm_resp, 3);
+    if (out && set_platform_fsm_resp.success) return true;
     return false;
+  }
+
+  bool sendDisarm() {
+    std_srvs::srv::SetBool::Request set_platform_disarm_req;
+    std_srvs::srv::SetBool::Response set_platform_disarm_resp;
+    set_platform_disarm_req.data = false;
+    auto out =
+        platform_disarm_cli_->sendRequest(set_platform_disarm_req, set_platform_disarm_resp, 3);
+    if (out && set_platform_disarm_resp.success) return true;
+    return false;
+  }
+
+  bool process_goal(std::shared_ptr<const as2_msgs::action::Land::Goal> goal,
+                    as2_msgs::action::Land::Goal &new_goal) {
+    new_goal.land_speed = (goal->land_speed != 0.0f)
+                              ? -fabs(goal->land_speed)
+                              : -fabs(this->get_parameter("default_land_speed").as_double());
+
+    if (!sendEventFSME(PSME::LAND)) {
+      RCLCPP_ERROR(this->get_logger(), "LandBehaviour: Could not set FSM to land");
+      return false;
+    }
+    return true;
+  }
+
+  bool on_activate(std::shared_ptr<const as2_msgs::action::Land::Goal> goal) override {
+    as2_msgs::action::Land::Goal new_goal = *goal;
+    if (!process_goal(goal, new_goal)) {
+      return false;
+    }
+    return land_plugin_->on_activate(
+        std::make_shared<const as2_msgs::action::Land::Goal>(new_goal));
+  }
+
+  bool on_modify(std::shared_ptr<const as2_msgs::action::Land::Goal> goal) override {
+    as2_msgs::action::Land::Goal new_goal = *goal;
+    if (!process_goal(goal, new_goal)) {
+      return false;
+    }
+    return land_plugin_->on_modify(std::make_shared<const as2_msgs::action::Land::Goal>(new_goal));
+  }
+
+  bool on_deactivate(const std::shared_ptr<std::string> &message) override {
+    return land_plugin_->on_deactivate(message);
+  }
+
+  bool on_pause(const std::shared_ptr<std::string> &message) override {
+    return land_plugin_->on_pause(message);
+  }
+
+  bool on_resume(const std::shared_ptr<std::string> &message) override {
+    return land_plugin_->on_resume(message);
+  }
+
+  as2_behavior::ExecutionStatus on_run(
+      const std::shared_ptr<const as2_msgs::action::Land::Goal> &goal,
+      std::shared_ptr<as2_msgs::action::Land::Feedback> &feedback_msg,
+      std::shared_ptr<as2_msgs::action::Land::Result> &result_msg) override {
+    return land_plugin_->on_run(goal, feedback_msg, result_msg);
+  }
+
+  void on_excution_end(const as2_behavior::ExecutionStatus &state) override {
+    if (state == as2_behavior::ExecutionStatus::SUCCESS) {
+      if (!sendEventFSME(PSME::LANDED)) {
+        RCLCPP_ERROR(this->get_logger(), "LandBehaviour: Could not set FSM to Landed");
+      }
+      if (!sendDisarm()) {
+        RCLCPP_ERROR(this->get_logger(), "LandBehaviour: Could not disarm");
+      }
+    } else {
+      if (!sendEventFSME(PSME::EMERGENCY)) {
+        RCLCPP_ERROR(this->get_logger(), "LandBehaviour: Could not set FSM to EMERGENCY");
+      }
+    }
+    return land_plugin_->on_excution_end(state);
   }
 
 private:
   std::shared_ptr<pluginlib::ClassLoader<land_base::LandBase>> loader_;
   std::shared_ptr<land_base::LandBase> land_plugin_;
+  std::shared_ptr<as2::tf::TfHandler> tf_handler_;
+  rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr twist_sub_;
+  as2::SynchronousServiceClient<as2_msgs::srv::SetPlatformStateMachineEvent>::SharedPtr
+      platform_land_cli_;
+  as2::SynchronousServiceClient<std_srvs::srv::SetBool>::SharedPtr platform_disarm_cli_;
 };
 
-#endif  // LAND_BEHAVIOUR_HPP
+#endif  // GOTO_BEHAVIOUR_HPP

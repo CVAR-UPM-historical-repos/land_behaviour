@@ -22,6 +22,9 @@ set(PROJECT_DEPENDENCIES
   as2_core
   as2_msgs
   geometry_msgs
+  as2_behavior
+  tf2_geometry_msgs
+  Eigen3
 )
 
 foreach(DEPENDENCY ${PROJECT_DEPENDENCIES})
