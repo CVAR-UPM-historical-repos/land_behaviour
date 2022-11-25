@@ -98,6 +98,8 @@ public:
       this->~LandBehaviour();
     }
 
+    base_link_frame_id_ = as2::tf::generateTfName(this, "base_link");
+
     platform_disarm_cli_ = std::make_shared<as2::SynchronousServiceClient<std_srvs::srv::SetBool>>(
         as2_names::services::platform::set_arming_state, this);
 
@@ -116,15 +118,13 @@ public:
 
   void state_callback(const geometry_msgs::msg::TwistStamped::SharedPtr _twist_msg) {
     geometry_msgs::msg::PoseStamped pose_msg;
-    geometry_msgs::msg::TwistStamped twist_msg = *_twist_msg;
-
-    if (!tf_handler_->tryConvert(twist_msg, "earth")) return;
+    geometry_msgs::msg::TwistStamped twist_msg;
 
     try {
-      pose_msg = tf_handler_->getPoseStamped("earth", as2::tf::generateTfName(this, "base_link"),
-                                             tf2_ros::fromMsg(twist_msg.header.stamp));
+      auto [pose_msg, twist_msg] =
+          tf_handler_->getState(*_twist_msg, "earth", "earth", base_link_frame_id_);
     } catch (tf2::TransformException &ex) {
-      RCLCPP_WARN(this->get_logger(), "Could not get state pose transform: %s", ex.what());
+      RCLCPP_WARN(this->get_logger(), "Could not get transform: %s", ex.what());
       return;
     }
 
@@ -142,6 +142,7 @@ public:
   }
 
   bool sendDisarm() {
+    RCLCPP_INFO(this->get_logger(), "Disarming platform");
     std_srvs::srv::SetBool::Request set_platform_disarm_req;
     std_srvs::srv::SetBool::Response set_platform_disarm_resp;
     set_platform_disarm_req.data = false;
@@ -202,6 +203,7 @@ public:
 
   void on_excution_end(const as2_behavior::ExecutionStatus &state) override {
     if (state == as2_behavior::ExecutionStatus::SUCCESS) {
+      RCLCPP_INFO(this->get_logger(), "LandBehaviour: Land successful");
       if (!sendEventFSME(PSME::LANDED)) {
         RCLCPP_ERROR(this->get_logger(), "LandBehaviour: Could not set FSM to Landed");
       }
@@ -209,6 +211,7 @@ public:
         RCLCPP_ERROR(this->get_logger(), "LandBehaviour: Could not disarm");
       }
     } else {
+      RCLCPP_INFO(this->get_logger(), "LandBehaviour: Land failed");
       if (!sendEventFSME(PSME::EMERGENCY)) {
         RCLCPP_ERROR(this->get_logger(), "LandBehaviour: Could not set FSM to EMERGENCY");
       }
@@ -217,6 +220,7 @@ public:
   }
 
 private:
+  std::string base_link_frame_id_;
   std::shared_ptr<pluginlib::ClassLoader<land_base::LandBase>> loader_;
   std::shared_ptr<land_base::LandBase> land_plugin_;
   std::shared_ptr<as2::tf::TfHandler> tf_handler_;
